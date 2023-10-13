@@ -1,0 +1,345 @@
+---
+title: "Meet up - R Ladies: Caso Práctico"
+output: html_document
+date: "2023-10-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Librerías
+
+```{r}
+# install.packages(c("tidyverse", "fastDummies", "tidymodels", 
+#                    "vip", "skimr", "tidypredict"))
+
+## Para análisis exploratorio
+library(tidyverse)
+library(scales)
+library(fastDummies)
+
+## Para modelo predictivos
+library(tidymodels)
+library(vip)
+
+## Obtención de fórmula o reglas de modelo
+library(tidypredict)
+
+## Configurando gráficos
+theme_set(theme_light() + 
+            theme(legend.position = "bottom", 
+                  plot.title = element_text(hjust = 0.5), 
+                  plot.subtitle = element_text(hjust = 0.5), 
+                  panel.grid = element_blank()))
+```
+
+## Cargando datos
+
+```{r}
+rstudioapi::documentPath() |> 
+  dirname() |> 
+  setwd()
+
+dataset_train <- read_csv("../Data/train.csv")
+```
+
+## Calidad de datos
+
+```{r}
+dataset_train |> 
+  skimr::skim()
+```
+
+- De las variables categóricas Cabin y Emarked tienen (77.1% y 0.2%) de missings respectivamente.
+- De las variables numéricas, age tiene un 19.9% de missings.
+
+## Análisis de datos
+
+### Análisis univariado
+
+```{r}
+dataset_train |> 
+  count(Survived) |> 
+  mutate(prop = n / sum(n), 
+         Survived = ifelse(Survived == 1, "Sí", "No")) |> 
+  ggplot(aes(x = "", y = prop, fill = as.character(Survived))) + 
+  geom_col() + 
+  geom_text(aes(label = percent(prop, accuracy = 0.01)), 
+            position = position_stack(vjust = 0.5), 
+            color = "white") + 
+  coord_polar(theta = "y") + 
+  theme_void() + 
+  labs(title = "Casos de Supervivencia en el Titanic", 
+       fill = "¿Sobrevivió?") + 
+  scale_fill_manual(values = c("#f07167", "#0077b6")) + 
+  theme(legend.position = "bottom", 
+        plot.title = element_text(hjust = 0.5), 
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+- 38.4% de sobrevivientes
+- 61.6% de fallecidos
+
+```{r}
+dataset_train |> 
+  count(Pclass) |> 
+  mutate(prop = n / sum(n), 
+         Pclass = glue::glue("Pclass {Pclass}"), 
+         ) |> 
+  ggplot(aes(Pclass, prop)) + 
+  geom_col(width = 0.4, 
+           fill = "#003566") + 
+  geom_text(aes(label = percent(prop)), 
+            vjust = -0.2) + 
+  labs(title = "Distribución de Personas según Clase de Ticket") + 
+  theme(axis.text.y = element_blank(), 
+        axis.title.y = element_blank())
+```
+
+- Más del 50% de pasajeros ha estado adquirió el ticket Pclass 3.
+
+```{r}
+dataset_train |> 
+  count(Sex) |> 
+  mutate(prop = n / sum(n)) |> 
+  ggplot(aes(x = "", y = prop, fill = Sex)) + 
+  geom_col() + 
+  geom_text(aes(label = percent(prop)), 
+            position = position_stack(0.5), 
+            color = "white") + 
+  coord_polar(theta = "y") + 
+  labs(title = "Distribución de Pasajeros según el Género") + 
+  theme_void() + 
+  scale_fill_manual(name = "Género", 
+                    labels = c("Femenino", "Masculino"), 
+                    values = c("#f28482", "#003566")) + 
+  theme(legend.position = "bottom")
+```
+
+- La mayoría de los que viajaban en el Titanic fueron varones. 
+
+```{r}
+dataset_train |> 
+  ggplot(aes(Age)) + 
+  geom_histogram(fill = "#5fa8d3") + 
+  geom_vline(aes(xintercept = mean(Age, na.rm = TRUE)), 
+             lty = 2, 
+             color = "firebrick") + 
+  labs(title = "Distribución de la Edad de los Pasajeros del Titanic", 
+       x = "Edad", 
+       caption = glue::glue("Nota:\nLa línea roja representa la media de la edad que es {round(mean(dataset_train$Age, na.rm = TRUE), 2)}")) + 
+  theme(plot.caption = element_text(hjust = 0))
+```
+
+- La edad promedio de los pasajeros es de 29.7 años y la mayoría de pasajeros tenían edades que oscilaban entre 20 y 40 años.
+
+```{r}
+dataset_train |> 
+  count(SibSp) |> 
+  ggplot(aes(as.character(SibSp), n)) + 
+  geom_col(fill = "#5fa8d3") + 
+  labs(title = "Distribución de Pasajeros según # de hermanos o cónyugues", 
+       x = "# de hermanos o cónyugues", 
+       y = "Cantidad de Pasajeros")
+```
+
+```{r}
+dataset_train |> 
+  count(Parch) |> 
+  ggplot(aes(Parch, n)) + 
+  geom_col(fill = "#5fa8d3") + 
+  labs(title = "Distribución de Pasajares según # de padres/hijos a bordo del Titanic", 
+       x = "# de padres/hijos a bordo del Titanic", 
+       y = "Cantidad de Pasajeros")
+```
+
+
+```{r}
+dataset_train |> 
+  ggplot(aes(Fare)) + 
+  geom_histogram(fill = "#5fa8d3") + 
+  geom_vline(aes(xintercept = median(Fare)), 
+             lty = 2, 
+             color = "firebrick") + 
+  labs(title = "Distribución de la Tarifa pagada por cada Pasajero", 
+       x = "Tarifa (Fare)", 
+       y = "Cantidad de Pasajeros", 
+       caption = glue::glue("Nota:\nLa el 50% de pasajero pagó hasta {round(median(dataset_train$Fare, na.rm = TRUE), 2)}"))
+```
+
+- El 50% de pasajeros pagó hasta 14.45.
+- Solo una minoría pudo pagar cifras muy altas cercanas a 500.
+
+```{r}
+dataset_train |> 
+  count(Embarked, sort = TRUE) |> 
+  mutate(prop = n / sum(n))
+```
+
+- La mayoría embarcó en Southampton
+- Presencia de 2 missings
+
+### Análisis bivariado
+
+```{r}
+dataset_train |> 
+  ggplot(aes(Age, fill = as.character(Survived))) + 
+  geom_histogram(position = "identity", alpha = 0.5)
+```
+
+```{r}
+dataset_train |> 
+  ggplot(aes(SibSp, fill = as.character(Survived))) + 
+  geom_histogram(position = "identity", alpha = 0.5)
+```
+
+```{r}
+dataset_train |> 
+  ggplot(aes(Parch, fill = as.character(Survived))) + 
+  geom_histogram(position = "identity", alpha = 0.5)
+```
+
+```{r}
+dataset_train |> 
+  ggplot(aes(Fare, fill = as.character(Survived))) + 
+  geom_histogram(position = "identity", alpha = 0.5)
+
+## Log 10
+dataset_train |> 
+  ggplot(aes(Fare, fill = as.character(Survived))) + 
+  geom_histogram(position = "identity", alpha = 0.5) + 
+  scale_x_continuous(trans = "log10")
+```
+
+```{r}
+dataset_train |> 
+  select_if(is.numeric) |> 
+  select(-PassengerId, -Survived) |> 
+  GGally::ggpairs()
+```
+
+```{r}
+dataset_train |> 
+  select(is.numeric) |> 
+  select(-PassengerId, -Survived) |> 
+  na.omit() |>
+  cor(method = "spearman") |> 
+  as.data.frame() |> 
+  rownames_to_column("V1") |> 
+  pivot_longer(cols = -V1, 
+               names_to = "V2", 
+               values_to = "cor") |> 
+  ggplot(aes(V1, V2, fill = cor)) + 
+  geom_tile() + 
+  geom_text(aes(label = round(cor, 2))) + 
+  scale_fill_gradient2(low = "steelblue", 
+                       mid = "white", 
+                       high = "firebrick", 
+                       limits = c(-1, 1)) + 
+  theme(legend.position = "bottom", 
+        axis.title = element_blank(), 
+        axis.ticks = element_blank(), 
+        panel.border = element_blank())
+```
+
+## Preparación de datos
+
+```{r}
+set.seed(42)
+dataset_train_p <- dataset_train |> 
+  mutate(Survived = factor(Survived, levels = c("0", "1"), labels = c("0", "1"))) |> 
+  select(-PassengerId) |> 
+  mutate(Age = replace_na(Age, median(Age, na.rm = TRUE)), 
+         Embarked = replace_na(Embarked, DescTools::Mode(Embarked, na.rm = TRUE))) |> 
+  select(-Cabin, -Ticket) |> 
+  dummy_cols(select_columns = c("Sex", "Embarked"), 
+             remove_first_dummy = TRUE, 
+             remove_selected_columns = TRUE)
+
+particion_inicial <- initial_split(dataset_train_p, prop = 0.8, strata = "Survived")
+dfTrain <- training(particion_inicial)
+dfTest <- testing(particion_inicial)
+```
+
+## Modelamiento
+
+```{r}
+specRf <- rand_forest(trees = 100) |> 
+  set_engine("ranger", importance = "impurity") |> 
+  set_mode("classification")
+
+wfRf <- workflow() |> 
+  add_formula(as.formula("Survived ~ .")) |> 
+  add_model(specRf)
+
+fitRf <- wfRf |> 
+  fit(dfTrain)
+
+fitRf |> 
+  extract_fit_engine() |> 
+  vip() + 
+  labs(title = "Importancia de Variables")
+```
+
+```{r}
+dfPredict <- fitRf |> 
+  predict(dfTest) |> 
+  mutate(real = dfTest$Survived)
+
+caret::confusionMatrix(dfPredict$.pred_class, dfPredict$real)
+
+dfPredictTrain <- fitRf |> 
+  predict(dfTrain) |> 
+  mutate(real = dfTrain$Survived)
+
+caret::confusionMatrix(dfPredictTrain$.pred_class, dfPredictTrain$real)
+```
+
+## Traducción a SQL
+
+### Conexión a SQL Local (Simulado)
+
+```{r}
+# install.packages("RSQLite")
+
+library(DBI)
+
+con <- dbConnect(RSQLite::SQLite(), dbname = ":memory:")
+```
+
+### Escritura de dataset en base de datos
+
+```{r}
+dbWriteTable(con, "titanic", dataset_train_p)
+```
+
+```{r}
+modelo_final <- extract_fit_engine(fitRf)
+
+modelo_analizado <- parse_model(modelo_final)
+
+modelo_interpretado <- tidypredict_sql(model = modelo_analizado, 
+                                       con = con)
+
+modelo_interpretado[[1]]
+```
+
+```{r}
+query <- glue::glue(
+          "SELECT 
+              *, 
+              {modelo_interpretado[[1]]} AS PREDICCION
+           FROM titanic")
+
+
+dfPredict <- tbl(con, sql(query)) |> 
+  collect() |> 
+  mutate(Survived = factor(Survived, levels = c("0", "1"), labels = c("0", "1")), 
+         PREDICCION = factor(PREDICCION, levels = c("0", "1"), labels = c("0", "1")))
+
+caret::confusionMatrix(dfPredict$PREDICCION, dfPredict$Survived)
+```
+
+
+
